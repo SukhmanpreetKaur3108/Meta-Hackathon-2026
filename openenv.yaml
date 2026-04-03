@@ -1,0 +1,122 @@
+name: lpg-crisis-allocation
+version: "1.0.0"
+description: >
+  LPG cylinder budget allocation across Indian districts during supply crises
+  (shortage, war, natural disaster). An AI agent must prioritise vulnerable
+  households, suppress black-market leakage, and ensure hospital/military zones
+  never run out — across 30 real districts from Census of India 2011 data.
+
+domain: resource-allocation
+tags:
+  - india
+  - lpg
+  - crisis-management
+  - war
+  - supply-chain
+  - vulnerable-households
+  - openenv
+
+author: "Jaswa (Meta OpenEnv Hackathon 2025)"
+license: MIT
+
+environment:
+  class: lpg_crisis_env.env.LPGCrisisEnv
+  module: lpg_crisis_env
+
+observation_space:
+  type: structured
+  model: lpg_crisis_env.models.Observation
+  fields:
+    districts:
+      type: list[DistrictState]
+      description: Per-district state including stock, demand, vulnerability, route status
+    cylinders_remaining:
+      type: int
+      description: Budget remaining for today's allocation
+    days_remaining:
+      type: int
+      description: Days left in the crisis episode
+    crisis_type:
+      type: enum
+      values: [supply_shortage, war, natural_disaster]
+    crisis_severity:
+      type: float
+      range: [0.0, 1.0]
+    market_price_multiplier:
+      type: float
+      description: >1.0 indicates black-market price inflation
+    supply_disruption_prob:
+      type: float
+      range: [0.0, 1.0]
+
+action_space:
+  type: structured
+  model: lpg_crisis_env.models.Action
+  fields:
+    allocations:
+      type: list[AllocationAction]
+      description: Per-district cylinder counts; must not exceed cylinders_remaining
+    activate_emergency:
+      type: list[str]
+      description: District IDs to activate emergency protocol (reduces black-market index)
+
+reward:
+  type: shaped
+  model: lpg_crisis_env.models.Reward
+  range: [0.0, 1.0]
+  components:
+    coverage_score: {weight: 0.30, description: Fraction of daily demand met}
+    equity_score: {weight: 0.20, description: Inverse Gini of per-district coverage}
+    vulnerability_score: {weight: 0.25, description: BPL/elderly household coverage}
+    efficiency_score: {weight: 0.10, description: Cylinders reaching households vs wasted}
+    black_market_penalty: {weight: -0.10, description: Fraction lost to diversion}
+    war_protocol_bonus: {weight: 0.05, description: Hospital/military zone coverage in WAR mode}
+
+tasks:
+  - id: task_1
+    name: Emergency Day-1 Allocation
+    difficulty: easy
+    config_key: easy
+    episode_length: 1
+    success_threshold: 0.70
+    grader: lpg_crisis_env.graders.grade_task_1
+
+  - id: task_2
+    name: 7-Day Crisis Management
+    difficulty: medium
+    config_key: medium
+    episode_length: 7
+    success_threshold: 0.55
+    grader: lpg_crisis_env.graders.grade_task_2
+
+  - id: task_3
+    name: 30-Day War Crisis
+    difficulty: hard
+    config_key: hard
+    episode_length: 30
+    success_threshold: 0.45
+    grader: lpg_crisis_env.graders.grade_task_3
+
+inference:
+  script: inference.py
+  env_vars:
+    API_BASE_URL: https://router.huggingface.co/v1
+    MODEL_NAME: meta-llama/Llama-3.3-70B-Instruct
+    HF_TOKEN: "<your HuggingFace token>"
+
+docker:
+  image: lpg-crisis-env
+  build_cmd: docker build -t lpg-crisis-env .
+  run_cmd: docker run --rm -e HF_TOKEN=$HF_TOKEN -e MODEL_NAME=$MODEL_NAME lpg-crisis-env
+
+data_sources:
+  - name: Census of India 2011
+    url: https://censusindia.gov.in
+    used_for: Population and household data for 30 districts
+  - name: SECC 2011
+    url: https://secc.gov.in
+    used_for: Socio-economic vulnerability (BPL household) estimates
+  - name: Amazon/Flipkart market reports 2022-2024
+    used_for: >
+      Induction-stove adoption rates (Amazon 30x surge, Flipkart 4x demand increase
+      during LPG supply crisis; quick-commerce platforms sold out in metros)
